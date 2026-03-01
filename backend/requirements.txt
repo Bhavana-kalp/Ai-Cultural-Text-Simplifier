@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+pillow
+pytesseract
+python-multipart
+requests
+google-generativeai
+spacy
