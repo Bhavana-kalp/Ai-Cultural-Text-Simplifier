@@ -17,7 +17,7 @@ def show_translation(hindi_text: str, preprocessed: str = None, key_prefix: str 
         st.warning("No Hindi translation returned.")
     st.text_area("Hindi translation", value=hindi_text, height=220, key=f"{key_prefix}_hindi")
 
-def show_simplification(simplified: str, glossary: list, key_prefix: str = "simplified"):
+def show_simplification(simplified: str, glossary: list,key_prefix: str = "simplified"):
     st.subheader("Simplified Hindi (Easy Read)")
     if not simplified:
         st.warning("No simplified text returned.")

@@ -18,7 +18,7 @@ genai.configure(api_key=GEMINI_KEY)
 
 # Choose a model that exists in your account (from list_models output)
 # Recommended stable option:
-DEFAULT_GEMINI_MODEL = "models/gemini-2.5-flash"
+DEFAULT_GEMINI_MODEL = "models/gemini-flash-latest"
 
 # --- spaCy NER (graceful) ---
 try:
@@ -46,21 +46,64 @@ def extract_sanskrit_terms(text: str) -> List[str]:
     return uniq[:40]
 
 def _build_prompt(sanskrit_text: str, hindi_text: str, terms: List[str]) -> str:
-    terms_text = ", ".join(terms) if terms else "none"
-    prompt = f"""
-You are an expert in Sanskrit and Hindi simplification. Output ONLY valid JSON with two keys:
-  1) "simplified_hindi": a simplified Hindi version understandable by high-school readers.
-  2) "glossary": a list of objects {{ "word": "<sanskrit>", "meaning": "<simple hindi explanation>" }}.
+    terms_text = ", ".join(terms) if terms else "Identify important Sanskrit terms yourself."
 
+    prompt = f"""
+You are a Sanskrit scholar and expert in Indian philosophy, culture and Hindi language.
+
+Your task is to:
+
+1. Simplify the given Hindi translation into very clear and easy Hindi suitable for school students (age 14–16).
+2. Provide a glossary of important Sanskrit terms.
+3. Add a short cultural or philosophical context explaining why this verse is important.
+
+Follow ALL instructions strictly:
+
+-----------------------------
+INPUT:
+-----------------------------
 Original Sanskrit:
 {sanskrit_text}
 
-Hindi translation:
+Hindi Translation:
 {hindi_text}
 
-Important Sanskrit terms detected: {terms_text}
+Detected Important Sanskrit Terms:
+{terms_text}
 
-Produce clean JSON only. Keep glossary concise (5-20 entries max) and explanations short (one sentence).
+-----------------------------
+TASK:
+-----------------------------
+1. Rewrite the Hindi translation into SIMPLE, NATURAL, and CLEAR Hindi.
+2. Use short sentences.
+3. Avoid difficult or highly Sanskritised Hindi words.
+4. Preserve the original meaning accurately.
+5. If the verse relates to philosophy, ethics, devotion, duty, or cultural tradition, explain it briefly.
+6.Cultural context must be 2–4 sentences only.
+7. Create a glossary of important Sanskrit words:
+   - Include 5–10 important terms only.
+   - Each meaning must be one short and simple sentence.
+   - Avoid repetition.
+
+-----------------------------
+OUTPUT FORMAT (VERY STRICT):
+-----------------------------
+Return ONLY valid JSON.
+Do NOT add explanations.
+Do NOT add markdown.
+Do NOT add extra text.
+
+The JSON must look exactly like this:
+
+{{
+  "simplified_hindi": "Simplified explanation in clear Hindi...",
+  "glossary": [
+    {{"word": "term1", "meaning": "simple meaning"}},
+    {{"word": "term2", "meaning": "simple meaning"}}
+  ]
+}}
+
+If you fail to produce valid JSON, the system will reject your answer.
 """
     return prompt
 
@@ -75,7 +118,7 @@ def simplify_with_glossary(sanskrit_text: str, hindi_text: str) -> Dict:
     try:
         model = genai.GenerativeModel(DEFAULT_GEMINI_MODEL)
         # generate_content is supported for this model per your account's list_models
-        response = model.generate_content(prompt)
+        response = model.generate_content(prompt,generation_config={"max_output_tokens": 400, "temperature": 0.65 })
         output_text = getattr(response, "text", "") or str(response)
     except Exception as e:
         logger.exception("Generation failed with model %s: %s", DEFAULT_GEMINI_MODEL, e)
