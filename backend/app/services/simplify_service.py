@@ -118,7 +118,7 @@ def simplify_with_glossary(sanskrit_text: str, hindi_text: str) -> Dict:
     try:
         model = genai.GenerativeModel(DEFAULT_GEMINI_MODEL)
         # generate_content is supported for this model per your account's list_models
-        response = model.generate_content(prompt,generation_config={"max_output_tokens": 400, "temperature": 0.65 })
+        response = model.generate_content(prompt,generation_config={"max_output_tokens": 700, "temperature": 0.65 })
         output_text = getattr(response, "text", "") or str(response)
     except Exception as e:
         logger.exception("Generation failed with model %s: %s", DEFAULT_GEMINI_MODEL, e)
