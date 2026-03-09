@@ -6,7 +6,8 @@ def show_extracted_text(text: str, key_prefix: str = "extracted"):
     st.subheader("Extracted Sanskrit Text")
     if not text:
         st.warning("No text was extracted. Try better image quality or fallback language in backend.")
-    st.text_area("Sanskrit (Devanagari)", value=text, height=220, key=f"{key_prefix}_sanskrit")
+    st.text_area("Sanskrit (Devanagari)",value=text,height=220,key=f"{key_prefix}_sanskrit") 
+    # st.text_area("Sanskrit (Devanagari)", value=text, height=220, key=f"{key_prefix}_sanskrit")
 
 def show_translation(hindi_text: str, preprocessed: str = None, key_prefix: str = "translate"):
     st.subheader("Translated Hindi")

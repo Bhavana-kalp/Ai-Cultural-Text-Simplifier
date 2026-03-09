@@ -22,7 +22,7 @@ def _resize_and_compress(pil_image: Image.Image) -> bytes:
     pil_image.convert("RGB").save(buf, format="JPEG", quality=85)
     return buf.getvalue()
 
-@st.cache_data(show_spinner=False)
+# @st.cache_data(show_spinner=False)
 def _call_backend_bytes(image_bytes: bytes) -> dict:
     files = {"file": ("upload.jpg", image_bytes, "image/jpeg")}
     try:

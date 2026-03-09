@@ -1,5 +1,6 @@
 # backend/app/services/simplify_service.py
 import os
+import re
 import json
 import logging
 from typing import Dict, List
@@ -18,7 +19,7 @@ genai.configure(api_key=GEMINI_KEY)
 
 # Choose a model that exists in your account (from list_models output)
 # Recommended stable option:
-DEFAULT_GEMINI_MODEL = "models/gemini-flash-latest"
+DEFAULT_GEMINI_MODEL = "models/gemini-2.5-flash"
 
 # --- spaCy NER (graceful) ---
 try:
@@ -35,7 +36,7 @@ def extract_sanskrit_terms(text: str) -> List[str]:
         doc = nlp(text)
         terms = {ent.text for ent in doc.ents}
         if terms:
-            return list(terms)
+            return list(terms)[:8]
     # Fallback: crude tokenization for Devanagari words (tokens of length >= 2)
     import re
     tokens = re.findall(r"[\u0900-\u097F]{2,}", text)
@@ -43,7 +44,7 @@ def extract_sanskrit_terms(text: str) -> List[str]:
     for t in tokens:
         if t not in uniq:
             uniq.append(t)
-    return uniq[:40]
+    return uniq[:8]
 
 def _build_prompt(sanskrit_text: str, hindi_text: str, terms: List[str]) -> str:
     terms_text = ", ".join(terms) if terms else "Identify important Sanskrit terms yourself."
@@ -118,29 +119,48 @@ def simplify_with_glossary(sanskrit_text: str, hindi_text: str) -> Dict:
     try:
         model = genai.GenerativeModel(DEFAULT_GEMINI_MODEL)
         # generate_content is supported for this model per your account's list_models
-        response = model.generate_content(prompt,generation_config={"max_output_tokens": 700, "temperature": 0.65 })
+        response = model.generate_content(prompt)
         output_text = getattr(response, "text", "") or str(response)
     except Exception as e:
         logger.exception("Generation failed with model %s: %s", DEFAULT_GEMINI_MODEL, e)
         raise RuntimeError(f"Generation failed: {e}")
+    # -------- Robust JSON Parsing --------
+    cleaned = output_text.strip()
 
-    # Try to parse JSON strictly, else try to extract a JSON object substring.
+    # Remove possible markdown wrappers
+    cleaned = cleaned.replace("```json", "").replace("```", "").strip()
+
+    parsed = None
+
+    # 1️⃣ Try direct parsing
     try:
-        parsed = json.loads(output_text.strip())
-        simplified = parsed.get("simplified_hindi", parsed.get("simplified", ""))
-        glossary = parsed.get("glossary", [])
-        return {"simplified_hindi": simplified, "glossary": glossary}
+        parsed = json.loads(cleaned)
     except Exception:
-        # Attempt to extract {...} substring
-        import re
-        m = re.search(r"\{.*\}", output_text, flags=re.S)
-        if m:
+        pass
+
+    # 2️⃣ Try extracting JSON object
+    if parsed is None:
+        match = re.search(r"\{[\s\S]*\}", cleaned)
+        if match:
             try:
-                parsed = json.loads(m.group(0))
-                simplified = parsed.get("simplified_hindi", parsed.get("simplified", ""))
-                glossary = parsed.get("glossary", [])
-                return {"simplified_hindi": simplified, "glossary": glossary}
-            except Exception:
-                logger.warning("Failed to parse JSON from substring; returning raw text.")
-        # Final fallback: return raw model text as simplified_hindi and empty glossary
-        return {"simplified_hindi": output_text.strip(), "glossary": []}
+                parsed = json.loads(match.group())
+            except Exception as e:
+                logger.warning("JSON extraction failed: %s", e)
+
+    # 3️⃣ Final fallback
+    if parsed is None:
+        logger.warning("Could not parse Gemini JSON output.")
+        logger.warning("Model output was: %s", cleaned)
+
+        return {
+            "simplified_hindi": "Simplification failed. Please retry.",
+            "glossary": []
+        }
+
+    simplified = parsed.get("simplified_hindi", "")
+    glossary = parsed.get("glossary", [])
+
+    return {
+        "simplified_hindi": simplified,
+        "glossary": glossary
+   }

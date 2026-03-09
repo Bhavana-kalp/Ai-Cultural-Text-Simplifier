@@ -6,7 +6,7 @@ from utils.config import TRANSLATE_URL
 
 TIMEOUT = 30
 
-@st.cache_data(show_spinner=False)
+# @st.cache_data(show_spinner=False)
 def _call_translate_api(text: str) -> dict:
     """
     Call backend /api/translate with JSON payload { "text": "<sanskrit>" }.

@@ -4,9 +4,9 @@ import streamlit as st
 from typing import Dict
 from utils.config import SIMPLIFY_URL
 
-TIMEOUT = 60
+TIMEOUT = 120
 
-@st.cache_data(show_spinner=False)
+# @st.cache_data(show_spinner=False)
 def _call_simplify_api(sanskrit: str, hindi: str) -> Dict:
     payload = {"sanskrit": sanskrit, "hindi": hindi}
     try:
