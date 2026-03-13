@@ -1,6 +1,6 @@
 # backend/app/services/simplify_service.py
+
 import os
-import re
 import json
 import logging
 from typing import Dict, List
@@ -11,156 +11,181 @@ import spacy
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# --- Gemini config ---
+# ---------- Gemini Config ----------
+
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
+
 if not GEMINI_KEY:
-    raise RuntimeError("GEMINI_API_KEY not set in environment.")
+    raise RuntimeError("GEMINI_API_KEY not set.")
+
 genai.configure(api_key=GEMINI_KEY)
 
-# Choose a model that exists in your account (from list_models output)
-# Recommended stable option:
-DEFAULT_GEMINI_MODEL = "models/gemini-2.5-flash"
+MODEL = "models/gemini-2.5-flash-lite"
 
-# --- spaCy NER (graceful) ---
+
+# ---------- spaCy NER ----------
+
 try:
     nlp = spacy.load("xx_ent_wiki_sm")
-except Exception as e:
-    logger.warning("spaCy model load failed (%s). NER fallback will be used.", e)
+except Exception:
+    logger.warning("spaCy model not found. Using fallback term extraction.")
     nlp = None
 
+
+# ---------- Extract Sanskrit Terms ----------
+
 def extract_sanskrit_terms(text: str) -> List[str]:
-    """Extract candidate Sanskrit terms using spaCy NER or a simple fallback tokeniser."""
+
     if not text:
         return []
-    if nlp:
-        doc = nlp(text)
-        terms = {ent.text for ent in doc.ents}
-        if terms:
-            return list(terms)[:8]
-    # Fallback: crude tokenization for Devanagari words (tokens of length >= 2)
-    import re
-    tokens = re.findall(r"[\u0900-\u097F]{2,}", text)
-    uniq = []
-    for t in tokens:
-        if t not in uniq:
-            uniq.append(t)
-    return uniq[:8]
 
-def _build_prompt(sanskrit_text: str, hindi_text: str, terms: List[str]) -> str:
-    terms_text = ", ".join(terms) if terms else "Identify important Sanskrit terms yourself."
+    # if nlp:
+    #     doc = nlp(text)
+    #     terms = {ent.text for ent in doc.ents}
+    #     if terms:
+    #         return list(terms)
+
+    import re
+    import unicodedata
+
+    if not text:
+        return []
+
+    # Normalize unicode
+    text = unicodedata.normalize("NFKC", text)
+    tokens = re.findall(r"[\u0900-\u097F]{2,}", text)
+    
+    unique = []
+
+    for t in tokens:
+        t = t.strip()
+        if t in ["।", "॥"]:
+            continue
+        if t.isdigit():
+            continue
+        if len(t) <= 2:
+            continue
+        if t not in unique:
+            unique.append(t)
+
+    return unique[:40]
+
+
+# ---------- Call 1 : Simplify Hindi ----------
+
+def simplify_hindi(hindi_text: str) -> str:
 
     prompt = f"""
-You are a Sanskrit scholar and expert in Indian philosophy, culture and Hindi language.
+You are an expert in Sanskrit and Hindi explanation.
 
-Your task is to:
+Rewrite the Hindi translation below into MUCH SIMPLER Hindi so that a 14–16 year old student can easily understand it.
 
-1. Simplify the given Hindi translation into very clear and easy Hindi suitable for school students (age 14–16).
-2. Provide a glossary of important Sanskrit terms.
-3. Add a short cultural or philosophical context explaining why this verse is important.
+Rules:
+- Use short and clear sentences.
+- Replace difficult Sanskritised words with common Hindi.
+- If the text already looks simple, rewrite it anyway using easier wording.
+- Keep the original meaning correct.
 
-Follow ALL instructions strictly:
-
------------------------------
-INPUT:
------------------------------
-Original Sanskrit:
-{sanskrit_text}
-
-Hindi Translation:
+Hindi translation:
 {hindi_text}
 
-Detected Important Sanskrit Terms:
+Return ONLY the simplified Hindi text.
+"""
+
+    try:
+
+        model = genai.GenerativeModel(MODEL)
+
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                "temperature": 0.2,
+                "max_output_tokens": 3000
+            }
+        )
+
+        return response.text.strip()
+
+    except Exception as e:
+
+        logger.exception("Simplification failed")
+
+        return "Simplification failed."
+
+
+# ---------- Call 2 : Generate Glossary ----------
+
+def generate_glossary(terms: List[str]) -> List[Dict]:
+
+    if not terms:
+        return []
+
+    terms_text = ", ".join(terms)
+
+    prompt = f"""
+You are an expert in Sanskrit and Indian philosophy.
+
+Below is a list of Sanskrit words detected from the verse.
+
+Detected Sanskrit terms:
 {terms_text}
 
------------------------------
-TASK:
------------------------------
-1. Rewrite the Hindi translation into SIMPLE, NATURAL, and CLEAR Hindi.
-2. Use short sentences.
-3. Avoid difficult or highly Sanskritised Hindi words.
-4. Preserve the original meaning accurately.
-5. If the verse relates to philosophy, ethics, devotion, duty, or cultural tradition, explain it briefly.
-6.Cultural context must be 2–4 sentences only.
-7. Create a glossary of important Sanskrit words:
-   - Include 5–10 important terms only.
-   - Each meaning must be one short and simple sentence.
-   - Avoid repetition.
+Task:
+From the above list, SELECT the most important Sanskrit terms and explain them in very simple Hindi.
 
------------------------------
-OUTPUT FORMAT (VERY STRICT):
------------------------------
-Return ONLY valid JSON.
-Do NOT add explanations.
-Do NOT add markdown.
-Do NOT add extra text.
+Rules:
+- Choose only meaningful Sanskrit words.
+- Ignore punctuation, numbers, or meaningless tokens.
+- Explain each word in one short and simple Hindi sentence.
 
-The JSON must look exactly like this:
+Return ONLY valid JSON in this format:
 
 {{
-  "simplified_hindi": "Simplified explanation in clear Hindi...",
-  "glossary": [
-    {{"word": "term1", "meaning": "simple meaning"}},
-    {{"word": "term2", "meaning": "simple meaning"}}
-  ]
+ "glossary": [
+   {{"word": "term", "meaning": "simple Hindi explanation"}}
+ ]
 }}
-
-If you fail to produce valid JSON, the system will reject your answer.
 """
-    return prompt
+
+    try:
+
+        model = genai.GenerativeModel(MODEL)
+
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                "temperature": 0.2,
+                "max_output_tokens": 3000
+            }
+        )
+
+        text = response.text.strip()
+
+        text = text.replace("```json", "").replace("```", "").strip()
+
+        data = json.loads(text)
+
+        return data.get("glossary", [])
+
+    except Exception as e:
+
+        logger.warning("Glossary generation failed: %s", e)
+
+        return []
+
+
+# ---------- Main Function ----------
 
 def simplify_with_glossary(sanskrit_text: str, hindi_text: str) -> Dict:
-    """
-    Use Gemini 2.5 Flash to simplify Hindi and generate a glossary for Sanskrit terms.
-    Returns dict: {"simplified_hindi": str, "glossary": [ {word, meaning}, ... ] }
-    """
+
     terms = extract_sanskrit_terms(sanskrit_text)
-    prompt = _build_prompt(sanskrit_text, hindi_text, terms)
+    print("Extracted terms:", terms)
+    terms = [t for t in terms if len(t) > 2 and not t.isdigit()]
+    simplified = simplify_hindi(hindi_text)
 
-    try:
-        model = genai.GenerativeModel(DEFAULT_GEMINI_MODEL)
-        # generate_content is supported for this model per your account's list_models
-        response = model.generate_content(prompt)
-        output_text = getattr(response, "text", "") or str(response)
-    except Exception as e:
-        logger.exception("Generation failed with model %s: %s", DEFAULT_GEMINI_MODEL, e)
-        raise RuntimeError(f"Generation failed: {e}")
-    # -------- Robust JSON Parsing --------
-    cleaned = output_text.strip()
-
-    # Remove possible markdown wrappers
-    cleaned = cleaned.replace("```json", "").replace("```", "").strip()
-
-    parsed = None
-
-    # 1️⃣ Try direct parsing
-    try:
-        parsed = json.loads(cleaned)
-    except Exception:
-        pass
-
-    # 2️⃣ Try extracting JSON object
-    if parsed is None:
-        match = re.search(r"\{[\s\S]*\}", cleaned)
-        if match:
-            try:
-                parsed = json.loads(match.group())
-            except Exception as e:
-                logger.warning("JSON extraction failed: %s", e)
-
-    # 3️⃣ Final fallback
-    if parsed is None:
-        logger.warning("Could not parse Gemini JSON output.")
-        logger.warning("Model output was: %s", cleaned)
-
-        return {
-            "simplified_hindi": "Simplification failed. Please retry.",
-            "glossary": []
-        }
-
-    simplified = parsed.get("simplified_hindi", "")
-    glossary = parsed.get("glossary", [])
+    glossary = generate_glossary(terms)
 
     return {
         "simplified_hindi": simplified,
         "glossary": glossary
-   }
+    }
