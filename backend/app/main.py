@@ -3,6 +3,8 @@ from app.routes import text
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes import translate
 from app.routes import simplify
+from app.routes import mcq
+from app.routes import fill_blanks
 app = FastAPI(title="Sanskrit Text Simplifier Backend")
 
 
@@ -18,6 +20,8 @@ app.add_middleware(
 app.include_router(simplify.router, prefix="/api", tags=["Simplify"])
 app.include_router(text.router, prefix="/api", tags=["OCR"])
 app.include_router(translate.router, prefix="/api", tags=["Translate"])
+app.include_router(mcq.router, prefix="/api", tags=["MCQ"])
+app.include_router(fill_blanks.router, prefix="/api", tags=["FillBlanks"])
 @app.get("/")
 def root():
     return {"message": "Sanskrit Simplifier Backend Running!"}
