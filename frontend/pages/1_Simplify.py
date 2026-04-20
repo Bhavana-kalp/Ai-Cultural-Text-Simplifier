@@ -1,17 +1,17 @@
 import streamlit as st
 from components.uploader import image_uploader_section, text_input_section
-from components.display import show_extracted_text, show_translation, show_simplification
+from components.display import show_extracted_text, show_simplification
 from components.ocr_api import call_ocr_api
 from components.translator import translate_sanskrit
 from components.simplifier import simplify_text
 from utils.history_manager import save_to_history
 from components.mcq_api import fetch_mcqs
 from components.fill_blanks_api import fetch_fill_blanks
-import random
-st.set_page_config(page_title="Simplify Sanskrit Text", layout="wide")
 
-st.title("📖 Sanskrit Text Simplifier")
-st.markdown("Convert Sanskrit verses into simple daily Hindi with glossary support.")
+st.set_page_config(page_title="Sanskrit Learning Assistant", layout="wide")
+
+st.title("📖 AI Sanskrit Learning Assistant (SSC Ready)")
+st.markdown("Upload or paste Sanskrit text → get simple Hindi explanation instantly.")
 
 # ======================================================
 # SESSION STATE INIT
@@ -20,23 +20,22 @@ st.markdown("Convert Sanskrit verses into simple daily Hindi with glossary suppo
 if "sanskrit_text" not in st.session_state:
     st.session_state.sanskrit_text = ""
 
-if "hindi_text" not in st.session_state:
-    st.session_state.hindi_text = ""
-
 if "simplified" not in st.session_state:
     st.session_state.simplified = {"simplified_hindi": "", "glossary": []}
 
 # ======================================================
-# STEP 1 — INPUT
+# INPUT
 # ======================================================
 
-st.markdown("## 📝 Step 1: Provide Sanskrit Input")
+st.markdown("## 📝 Provide Sanskrit Input")
 
 mode = st.radio(
     "Choose Input Type:",
     ("Upload Image (OCR)", "Paste Sanskrit Text"),
     horizontal=True
 )
+
+pil_image = None
 
 with st.container(border=True):
 
@@ -46,112 +45,83 @@ with st.container(border=True):
         if pil_image:
             st.image(pil_image, caption="Uploaded Image", use_container_width=True)
 
-            if st.button("🔍 Run OCR"):
-                with st.spinner("Extracting Sanskrit text..."):
-                    try:
-                        # Clear downstream state
-                        st.session_state.hindi_text = ""
-                        st.session_state.simplified = {"simplified_hindi": "", "glossary": []}
-
-                        extracted = call_ocr_api(pil_image)
-                        st.session_state.sanskrit_text = extracted or ""
-
-                        st.success("OCR completed successfully.")
-                        show_extracted_text(st.session_state.sanskrit_text, key_prefix="ocr")
-
-                    except Exception as e:
-                        st.error(f"OCR failed: {e}")
-
     else:
         pasted = text_input_section()
-
         if pasted:
-            # Clear downstream state when new text pasted
-            if pasted != st.session_state.sanskrit_text:
-                st.session_state.hindi_text = ""
-                st.session_state.simplified = {"simplified_hindi": "", "glossary": []}
-
             st.session_state.sanskrit_text = pasted
-            show_extracted_text(st.session_state.sanskrit_text, key_prefix="paste")
 
 # ======================================================
-# STEP 2 — TRANSLATION
+# SINGLE PIPELINE BUTTON
 # ======================================================
 
-st.markdown("## 🔄 Step 2: Translate to Hindi")
+st.markdown("## 🚀 Generate Simplified Output")
 
 with st.container(border=True):
 
-    if st.button("Translate to Hindi"):
-        if not st.session_state.sanskrit_text.strip():
-            st.error("Please provide Sanskrit text first.")
-        else:
-            with st.spinner("Translating..."):
-                try:
-                    # Clear simplification state
-                    st.session_state.simplified = {"simplified_hindi": "", "glossary": []}
+    if st.button("✨ Generate Simplified Explanation"):
 
-                    hindi, raw = translate_sanskrit(st.session_state.sanskrit_text)
-                    st.session_state.hindi_text = hindi or ""
+        with st.spinner("Processing your input..."):
 
-                    st.success("Translation completed.")
-                    #show_translation(st.session_state.hindi_text, key_prefix="translated")
+            try:
+                # ---------- STEP 1: OCR (if image) ----------
+                if mode == "Upload Image (OCR)" and pil_image:
+                    sanskrit_text = call_ocr_api(pil_image)
+                    st.session_state.sanskrit_text = sanskrit_text
 
-                except Exception as e:
-                    st.error(f"Translation failed: {e}")
+                    show_extracted_text(sanskrit_text, key_prefix="auto_ocr")
 
-    if st.session_state.hindi_text:
-        show_translation(st.session_state.hindi_text, key_prefix="translated_display")
+                else:
+                    sanskrit_text = st.session_state.sanskrit_text
+
+                if not sanskrit_text.strip():
+                    st.error("Please provide Sanskrit input.")
+                    st.stop()
+
+                # ---------- STEP 2: TRANSLATE ----------
+                hindi, _ = translate_sanskrit(sanskrit_text)
+
+                # ---------- STEP 3: SIMPLIFY ----------
+                result = simplify_text(sanskrit_text, hindi)
+
+                simplified = result.get("simplified_hindi", "")
+                glossary = result.get("glossary", [])
+
+                # ---------- SAVE STATE ----------
+                st.session_state.simplified = {
+                    "simplified_hindi": simplified,
+                    "glossary": glossary
+                }
+
+                save_to_history(
+                    sanskrit_text,
+                    hindi,
+                    simplified,
+                    glossary
+                )
+
+                st.success("Done! ✨")
+
+            except Exception as e:
+                st.error(f"Processing failed: {e}")
 
 # ======================================================
-# STEP 3 — SIMPLIFICATION
+# SHOW RESULT
 # ======================================================
 
-st.markdown("## 🧠 Step 3: Simplify & Generate Glossary")
+if st.session_state.simplified["simplified_hindi"]:
+    show_simplification(
+        st.session_state.simplified["simplified_hindi"],
+        st.session_state.simplified["glossary"],
+        key_prefix="final_display"
+    )
 
-with st.container(border=True):
+#==========MCQ=========
 
-    if st.button("Simplify + Generate Glossary"):
-        if not st.session_state.sanskrit_text.strip():
-            st.error("Please provide Sanskrit text first.")
-        elif not st.session_state.hindi_text.strip():
-            st.error("Please translate text first.")
-        else:
-            with st.spinner("Simplifying text..."):
-                try:
-                    result = simplify_text(
-                        st.session_state.sanskrit_text,
-                        st.session_state.hindi_text
-                    )
+def build_glossary_map(glossary):
+    return {item["word"]: item["meaning"] for item in glossary if "word" in item and "meaning" in item}
 
-                    simplified = result.get("simplified_hindi", "")
-                    glossary = result.get("glossary", [])
 
-                    st.session_state.simplified = {
-                        "simplified_hindi": simplified,
-                        "glossary": glossary
-                    }
-
-                    save_to_history(
-                        st.session_state.sanskrit_text,
-                        st.session_state.hindi_text,
-                        simplified,
-                        glossary
-                    )
-
-                    st.success("Simplification completed.")
-                    
-
-                except Exception as e:
-                    st.error(f"Simplification failed: {e}")
-
-    if st.session_state.simplified["simplified_hindi"]:
-        show_simplification(
-            st.session_state.simplified["simplified_hindi"],
-            st.session_state.simplified["glossary"],
-            key_prefix="final_display"
-        )
-st.markdown("## 📝 Step 4: Practice MCQs")
+st.markdown("## 📝 Practice MCQs")
 
 with st.container(border=True):
 
@@ -160,119 +130,132 @@ with st.container(border=True):
         glossary = st.session_state.simplified.get("glossary", [])
 
         if not glossary:
-            st.warning("No glossary available. Please run simplification first.")
+            st.warning("Please generate explanation first.")
         else:
-            try:
-                mcqs = fetch_mcqs(glossary)
+            mcqs = fetch_mcqs(glossary)
 
-                st.session_state.mcqs = mcqs
-                st.session_state.mcq_answers = {}
-                st.session_state.mcq_submitted = False
+            st.session_state.mcqs = mcqs
+            st.session_state.mcq_answers = {}
+            st.session_state.mcq_submitted = False
 
-                st.success("MCQs generated!")
+            st.success("MCQs generated!")
 
-            except Exception as e:
-                st.error(str(e))
-
-
-# -------------------------------
-# DISPLAY MCQs
-# -------------------------------
-
-if "mcqs" in st.session_state and st.session_state.mcqs:
-
-    st.markdown("### 📚 Quiz")
+if "mcqs" in st.session_state:
 
     for idx, q in enumerate(st.session_state.mcqs):
 
         st.markdown(f"**Q{idx+1}. {q['question']}**")
 
-        selected = st.radio(
-            "Choose your answer:",
+        st.session_state.mcq_answers[idx] = st.radio(
+            "Choose answer:",
             q["options"],
             key=f"mcq_{idx}"
         )
 
-        st.session_state.mcq_answers[idx] = selected
+    # if st.button("✅ Submit Answers"):
+    #     score = 0
 
-    # -------------------------------
-    # SUBMIT BUTTON
-    # -------------------------------
+    #     for idx, q in enumerate(st.session_state.mcqs):
+    #         if st.session_state.mcq_answers[idx] == q["answer"]:
+    #             st.success(f"Q{idx+1}: Correct ✅")
+    #             score += 1
+    #         else:
+    #             st.error(f"Q{idx+1}: Wrong ❌ (Correct: {q['answer']})")
 
+    #     st.markdown(f"### 🏆 Score: {score} / {len(st.session_state.mcqs)}")
     if st.button("✅ Submit Answers"):
 
-        st.session_state.mcq_submitted = True
+        score = 0
+        mistakes = []
+
+        glossary = st.session_state.simplified.get("glossary", [])
+        glossary_map = build_glossary_map(glossary)
+
+        for idx, q in enumerate(st.session_state.mcqs):
+
+            user_ans = st.session_state.mcq_answers.get(idx)
+            correct = q["answer"]
+
+            if not user_ans:
+               st.warning(f"Q{idx+1}: Not attempted ⚠️")
+
+            elif user_ans == correct:
+               st.success(f"Q{idx+1}: Correct ✅")
+               score += 1
+
+            else:
+               st.error(f"Q{idx+1}: Wrong ❌ (Correct: {correct})")
+
+               #🧠 Build explanation
+               wrong_meaning = glossary_map.get(user_ans, "No meaning found")
+               correct_meaning = glossary_map.get(correct, "No meaning found")
+
+               explanation = f"""
+    ❌ You chose: **{user_ans}** → {wrong_meaning}  
+    ✅ Correct: **{correct}** → {correct_meaning}
+
+    👉 This question required understanding the correct context.
+    """
+
+               mistakes.append({
+                   "question": q["question"],
+                   "explanation": explanation
+                })
+
+        st.markdown(f"### 🏆 Score: {score} / {len(st.session_state.mcqs)}")
+    
+        if "mistakes" not in st.session_state:
+            st.session_state.mistakes = []
+
+        # Save mistakes
+        st.session_state.mistakes = mistakes
+
+        # -------------------------------
+        # REVIEW SECTION
+        # -------------------------------
+
+        if st.session_state.mistakes:
+
+            st.markdown("## 📌 Review Your Mistakes")
+
+            for i, m in enumerate(st.session_state.mistakes):
+
+                with st.expander(f"❌ Mistake {i+1}"):
+
+                    st.markdown(f"**Question:** {m['question']}")
+                    st.markdown(m["explanation"])
 
 
-# -------------------------------
-# SHOW RESULTS
-# -------------------------------
+# ======================================================
+# FILL IN THE BLANKS
+# ======================================================
 
-if st.session_state.get("mcq_submitted"):
-
-    st.markdown("### 🎯 Results")
-
-    score = 0
-
-    for idx, q in enumerate(st.session_state.mcqs):
-
-        user_ans = st.session_state.mcq_answers.get(idx)
-        correct_ans = q["answer"]
-
-        if user_ans == correct_ans:
-            st.success(f"Q{idx+1}: Correct ✅")
-            score += 1
-        else:
-            st.error(f"Q{idx+1}: Wrong ❌ (Correct: {correct_ans})")
-
-    st.markdown(f"### 🏆 Score: {score} / {len(st.session_state.mcqs)}")
-
-st.markdown("## ✍️ Step 5: Fill in the Blanks")
+st.markdown("## ✍️ Fill in the Blanks")
 
 with st.container(border=True):
 
     if st.button("🧩 Generate Fill in the Blanks"):
 
-        sanskrit = st.session_state.sanskrit_text
         glossary = st.session_state.simplified.get("glossary", [])
+        sanskrit = st.session_state.sanskrit_text
 
-        if not sanskrit or not glossary:
-            st.warning("Please complete simplification first.")
+        if not glossary:
+            st.warning("Please generate explanation first.")
         else:
-            try:
-                data = fetch_fill_blanks(sanskrit, glossary)
+            data = fetch_fill_blanks(sanskrit, glossary)
 
-                st.session_state.fill_data = data
-                st.session_state.fill_answers = [""] * len(data.get("blanks", []))
-                st.session_state.available_options = data.get("options", []).copy()
+            st.session_state.fill_data = data
+            st.session_state.fill_answers = [""] * len(data["blanks"])
+            st.session_state.available_options = data["options"].copy()
+            st.session_state.current_blank = 0
 
-                # ✅ IMPORTANT: track current blank index
-                st.session_state.current_blank = 0
-
-                st.success("Exercise generated!")
-
-            except Exception as e:
-                st.error(str(e))
-
-
-# -------------------------------
-# DISPLAY QUESTION
-# -------------------------------
+            st.success("Exercise generated!")
 
 if "fill_data" in st.session_state:
 
     data = st.session_state.fill_data
-    question = data.get("question_text", "")
 
-    st.markdown("### 📜 Fill the blanks")
-
-    st.text_area("Shloka", value=question, height=150)
-
-    # -------------------------------
-    # OPTIONS (SEQUENTIAL FILL)
-    # -------------------------------
-
-    st.markdown("### 🧩 Choose the correct words")
+    st.text_area("Shloka", value=data["question_text"], height=150)
 
     cols = st.columns(4)
 
@@ -283,58 +266,33 @@ if "fill_data" in st.session_state:
             idx = st.session_state.current_blank
 
             if idx < len(st.session_state.fill_answers):
-
-                # fill current blank
                 st.session_state.fill_answers[idx] = option
-
-                # move to next blank
                 st.session_state.current_blank += 1
-
-                # remove option
                 st.session_state.available_options.remove(option)
-
                 st.rerun()
-
-    # -------------------------------
-    # SHOW FILLED ANSWERS
-    # -------------------------------
-
-    st.markdown("### ✏️ Your Answers")
 
     for i, ans in enumerate(st.session_state.fill_answers):
         st.write(f"Blank {i+1}: {ans if ans else '___'}")
 
-    # -------------------------------
-    # SUBMIT
-    # -------------------------------
-
     if st.button("✅ Check Answers"):
 
-        correct_count = 0
-        blanks = data.get("blanks", [])
+        score = 0
 
-        for i, blank in enumerate(blanks):
-
-            correct = blank["answer"]
-            user_ans = st.session_state.fill_answers[i]
-
-            if user_ans == correct:
+        for i, blank in enumerate(data["blanks"]):
+            if st.session_state.fill_answers[i] == blank["answer"]:
                 st.success(f"Blank {i+1}: Correct ✅")
-                correct_count += 1
+                score += 1
             else:
-                st.error(f"Blank {i+1}: Wrong ❌ (Correct: {correct})")
+                st.error(f"Blank {i+1}: Wrong ❌ (Correct: {blank['answer']})")
 
-        st.markdown(f"### 🏆 Score: {correct_count} / {len(blanks)}")
+        st.markdown(f"### 🏆 Score: {score} / {len(data['blanks'])}")
 
-    # -------------------------------
-    # RESET
-    # -------------------------------
-
-    if st.button("🔄 Reset Answers"):
-        st.session_state.fill_answers = [""] * len(st.session_state.fill_answers)
-        st.session_state.available_options = data.get("options", []).copy()
+    if st.button("🔄 Reset"):
+        st.session_state.fill_answers = [""] * len(data["blanks"])
+        st.session_state.available_options = data["options"].copy()
         st.session_state.current_blank = 0
         st.rerun()
+
 # ======================================================
 # FOOTER
 # ======================================================
