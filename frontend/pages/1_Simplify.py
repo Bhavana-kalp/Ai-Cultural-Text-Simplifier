@@ -7,6 +7,13 @@ from components.simplifier import simplify_text
 from utils.history_manager import save_to_history
 from components.mcq_api import fetch_mcqs
 from components.fill_blanks_api import fetch_fill_blanks
+from components.tts import text_to_speech
+from components.speech_to_text import speech_to_text
+import random
+from rapidfuzz import fuzz
+
+def normalize(text):
+    return text.strip().lower().replace("।", "").replace(".", "")
 
 st.set_page_config(page_title="Sanskrit Learning Assistant", layout="wide")
 
@@ -109,11 +116,66 @@ with st.container(border=True):
 # ======================================================
 
 if st.session_state.simplified["simplified_hindi"]:
+    simplified_text = st.session_state.simplified["simplified_hindi"]
     show_simplification(
         st.session_state.simplified["simplified_hindi"],
         st.session_state.simplified["glossary"],
         key_prefix="final_display"
     )
+    st.markdown("### 🔊 Listen Explanation")
+    if st.button("▶️ Play Audio"):
+        audio_path = text_to_speech(simplified_text)
+        if audio_path:
+            audio_file = open(audio_path, "rb")
+            audio_bytes = audio_file.read()
+            st.audio(audio_bytes, format="audio/mp3")
+
+
+
+st.markdown("## 🎤 Speak & Verify Exercise")
+
+glossary = st.session_state.simplified.get("glossary", [])
+
+if glossary:
+
+    # pick random word
+    if "speech_word" not in st.session_state:
+        st.session_state.speech_word = random.choice(glossary)
+
+    word = st.session_state.speech_word["word"]
+    correct_meaning = st.session_state.speech_word["meaning"]
+
+    st.markdown(f"### 🧠 Speak the meaning of: **{word}**")
+
+    if st.button("🎙️ Start Recording"):
+
+        with st.spinner("Listening... Speak now"):
+            spoken_text = speech_to_text()
+
+        st.write(f"👉 You said: **{spoken_text}**")
+        spoken_clean = normalize(spoken_text)
+        correct_clean = normalize(correct_meaning)
+        score = fuzz.ratio(spoken_text, correct_meaning)
+        # -------- MATCHING LOGIC --------
+        if score > 70:   # you can tune (60–80)
+            
+            st.success("✅ Correct! Well done 🎉")
+
+        else:
+            st.error("❌ Not correct")
+
+            st.info(f"💡 Hint: {correct_meaning}")
+
+    # Next word
+    if st.button("➡️ Try Another Word"):
+        st.session_state.speech_word = random.choice(glossary)
+        st.rerun()
+
+else:
+    st.warning("Generate explanation first.")
+
+
+
 
 #==========MCQ=========
 
